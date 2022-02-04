@@ -107,10 +107,99 @@ kubectl port-forward svc/splunk-s1-standalone-service -n $NAMESPACE_NAME :8000 :
 python -m pytest -v --username=admin --password=Chang3d! --splunk-url=localhost --splunkd-port=<splunk-management-port> --remote -n 5 tests/modinput_functional
 ```
 
-- UI
+- UI (local)
 ```bash
 python -m pytest -v --splunk-type=external --splunk-host=localhost --splunkweb-port=<splunk-web-port> --splunk-port=<splunk-management-port> --splunk-password=Chang3d! --browser=<browser> --splunk-hec-port=<splunk-hec-port> --local tests/ui 
 ```
+
+- UI (in Saucelabs)
+
+Splunk should be ready with the steps mentioned above
+
+Set the following env variables with appropriate values
+
+```
+export SAUCE_USERNAME=<username>
+export SAUCE_PASSWORD=<password>
+export SAUCE_TUNNEL_PARENT=<parent-tunnel-name>
+export SAUCE_TUNNEL_ID=k8s-sauce-tunnel
+export SAUCE_IDENTIFIER=k8s-sauce-tunnel
+```
+
+Assuming the following files are present in the directory.
+ 
+ - test_runner.yaml
+ - test_runner_svc.yaml
+ - saucelabs.yaml
+ - saucelabs_svc.yaml
+
+Put these files into the root directory of addon repository, also update the value of env variables in file and apply as following
+```bash
+eval "echo \"$(cat ./saucelabs.yaml)\"" >> ./saucelabs.yaml
+kubectl apply -f ./saucelabs.yaml
+kubectl apply -f ./saucelabs_svc.yaml
+kubectl apply -f ./test_runner.yaml
+kubectl apply -f ./test_runner_svc.yaml
+```
+
+Verify test-runner is available 
+
+```
+kubectl wait pod -n $NAMESPACE_NAME --for=condition=ready --timeout=900s -l='app=test-runner'
+```
+
+Get the test runner pod name
+```
+export TEST_RUNNER_POD="$(kubectl get pods -n $NAMESPACE_NAME -l='app=test-runner' -o json| jq -r '.items[].metadata.name')"
+
+echo $TEST_RUNNER_POD
+```
+
+Copy the addon inside the test-runner
+```
+kubectl cp splunk-add-on-for-<addon-name> $TEST_RUNNER_POD:/opt/ -n $NAMESPACE_NAME -c test-runner
+```
+
+exec inside test-runner
+
+```
+kubectl exec --stdin --tty $TEST_RUNNER_POD -n $NAMESPACE_NAME -c test-runner -it -- /bin/bash
+```
+
+Install requirements and test execution
+
+```
+cd /opt/splunk-add-on-for-<addon-name>
+pip install poetry
+poetry export --without-hashes --dev -o requirements_dev.txt
+pip install -r requirements_dev.txt
+```
+
+Set the following env variables with appropriate values
+
+```
+export SAUCE_USERNAME=<username>
+export SAUCE_PASSWORD=<password>
+export SAUCE_TUNNEL_PARENT=<parent-tunnel-name>
+export SAUCE_TUNNEL_ID=<tunnel-id>
+export SAUCE_IDENTIFIER=$SAUCE_TUNNEL_ID
+export JOB_NAME="k8s::<addon-name>-<browser>-<unique-string>"
+```
+
+Best practice is to keep the JOB_NAME unique for each test execution
+
+Use the following pytest command to execute the tests from addon root directory
+```
+pytest -v -s --splunk-type=external --splunk-password=Chang3d! --splunk-host=splunk-s1-standalone-service.$NAMESPACE_NAME.svc.cluster.local --browser=<browser> tests/ui
+```
+
+Command to copy the artifacts from test-runner to local machine
+
+```
+kubectl cp $NAMESPACE_NAME/$TEST_RUNNER_POD:/opt/splunk-add-on-for-<add_on_name> <destination_directory>/splunk-add-on-for-<add_on_name> -c test-runner
+```
+
+### NOTE: Once test-execution is done user needs to manually delete the tunnel created in saucelabs with given SAUCE_TUNNEL_ID
 
 13. Delete the ./exposed_splunk_ports.log file and other kubernetes resources
 ```bash
@@ -141,6 +230,7 @@ cd <repo dir>
 
 2. Install Requirements
 ```bash
+pip install poetry
 poetry export --without-hashes --dev -o requirements_dev.txt
 pip install -r requirements_dev.txt
 ```
@@ -228,6 +318,18 @@ python -m pytest -vv --splunk-type=external --splunk-app=<path-to-addon-package>
 ```bash
 python -m pytest -vv --browser=<browser> --local --splunk-host=<web_url> --splunk-port=<mgmt_url> --splunk-user=<username> --splunk-password=<password>
 ```
+
+To execute the tests on saucelabs set the required env variable for saucelabs
+
+```
+export SAUCE_USERNAME=<username>
+export SAUCE_PASSWORD=<password>
+export JOB_NAME="Local::<addon-name>-browser-<unique-string>"
+```
+
+Best practice is to keep the JOB_NAME unique for each test execution
+
+Remove --local param from pytest command Tests should be executed on saucelabs
 
 - Modinput
 
